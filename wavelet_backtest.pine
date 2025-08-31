@@ -165,21 +165,21 @@ if barstate.islast
     strategyROI = (strategy.equity - 10000) / 10000 * 100
     buyHoldROI = (close - close[1]) / close[1] * 100
     
-    table.new(position.top_right, 2, 6, bgcolor=color.white, border_width=1)
-    table.cell(table.all, 0, 0, "Metric", text_color=color.black, bgcolor=color.gray)
-    table.cell(table.all, 1, 0, "Value", text_color=color.black, bgcolor=color.gray)
+    var table performanceTable = table.new(position.top_right, 2, 6, bgcolor=color.white, border_width=1)
+    table.cell(performanceTable, 0, 0, "Metric", text_color=color.black, bgcolor=color.gray)
+    table.cell(performanceTable, 1, 0, "Value", text_color=color.black, bgcolor=color.gray)
     
-    table.cell(table.all, 0, 1, "Strategy ROI", text_color=color.black)
-    table.cell(table.all, 1, 1, str.tostring(strategyROI, "#.##") + "%", text_color=color.blue)
+    table.cell(performanceTable, 0, 1, "Strategy ROI", text_color=color.black)
+    table.cell(performanceTable, 1, 1, str.tostring(strategyROI, "#.##") + "%", text_color=color.blue)
     
-    table.cell(table.all, 0, 2, "Buy & Hold ROI", text_color=color.black)
-    table.cell(table.all, 1, 2, str.tostring(buyHoldROI, "#.##") + "%", text_color=color.gray)
+    table.cell(performanceTable, 0, 2, "Buy & Hold ROI", text_color=color.black)
+    table.cell(performanceTable, 1, 2, str.tostring(buyHoldROI, "#.##") + "%", text_color=color.gray)
     
-    table.cell(table.all, 0, 3, "Max Drawdown", text_color=color.black)
-    table.cell(table.all, 1, 3, str.tostring(maxDrawdown, "#.##") + "%", text_color=color.red)
+    table.cell(performanceTable, 0, 3, "Max Drawdown", text_color=color.black)
+    table.cell(performanceTable, 1, 3, str.tostring(maxDrawdown, "#.##") + "%", text_color=color.red)
     
-    table.cell(table.all, 0, 4, "Total Trades", text_color=color.black)
-    table.cell(table.all, 1, 4, str.tostring(strategy.closedtrades), text_color=color.black)
+    table.cell(performanceTable, 0, 4, "Total Trades", text_color=color.black)
+    table.cell(performanceTable, 1, 4, str.tostring(strategy.closedtrades), text_color=color.black)
     
-    table.cell(table.all, 0, 5, "Win Rate", text_color=color.black)
-    table.cell(table.all, 1, 5, str.tostring(strategy.wintrades / strategy.closedtrades * 100, "#.##") + "%", text_color=color.black)
+    table.cell(performanceTable, 0, 5, "Win Rate", text_color=color.black)
+    table.cell(performanceTable, 1, 5, str.tostring(strategy.wintrades / strategy.closedtrades * 100, "#.##") + "%", text_color=color.black)
