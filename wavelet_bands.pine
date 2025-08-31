@@ -52,18 +52,22 @@ if bar_index >= len
         else if changeVal < 0
             array.push(upChanges, -changeVal)
 
-// Limit volatility to reasonable bounds (min 1%, max 20% of current price)
+// Limit volatility to reasonable bounds (min 1%, max 15% of current price)
 minVol = close * 0.01
-maxVol = close * 0.20
+maxVol = close * 0.15  // Reduced from 20% to 15%
 volDown = array.size(downChanges) > 1 ? math.max(minVol, math.min(array.stdev(downChanges) * (multBase + speed * multAccel) * liqWeightDown, maxVol)) : close * 0.02
 volUp = array.size(upChanges) > 1 ? math.max(minVol, math.min(array.stdev(upChanges) * (multBase + speed * multAccel) * liqWeightUp, maxVol)) : close * 0.02
 
+// Additional smoothing for extreme volatility periods
+volDown := ta.sma(volDown, 5)  // 5-period simple moving average
+volUp := ta.sma(volUp, 5)      // 5-period simple moving average
+
 // Multi-level bands (asymmetric - wider upper bands to capture more upside)
-// Lower bands (oversold) - keep current levels
-offset1 = 0.5
-offset2 = 1.0
-offset3 = 1.5
-offset4 = 2.0
+// Lower bands (oversold) - more conservative to prevent extreme extensions
+offset1 = 0.4    // was 0.5
+offset2 = 0.8    // was 1.0
+offset3 = 1.2    // was 1.5
+offset4 = 1.6    // was 2.0
 
 // Upper bands (overbought) - extend further to capture more upside
 upperOffset1 = 1.0    // was 0.5

@@ -1,0 +1,185 @@
+//@version=5
+strategy("Wavelet Bands Strategy Backtest", overlay=false, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=100)
+
+// Inputs
+len = input.int(90, "Lookback Period for Volatility")
+smoothLen = input.int(14, "Gaussian Smoothing Length (Wavelet Scale)")
+multBase = input.float(1.0, "Base Multiplier")
+multAccel = input.float(0.5, "Acceleration Multiplier")
+liqWeightDown = input.float(1.5, "Downside Liquidation Weight")
+liqWeightUp = input.float(1.2, "Upside Liquidation Weight")
+rocLen = input.int(30, "ROC Length for Acceleration")
+
+// Strategy inputs
+useStopLoss = input.bool(true, "Use Stop Loss")
+stopLossPercent = input.float(20.0, "Stop Loss %", minval=1.0, maxval=50.0)
+useTakeProfit = input.bool(true, "Use Take Profit")
+takeProfitPercent = input.float(50.0, "Take Profit %", minval=10.0, maxval=200.0)
+useTrailingStop = input.bool(false, "Use Trailing Stop")
+trailingStopPercent = input.float(10.0, "Trailing Stop %", minval=1.0, maxval=30.0)
+
+// Gaussian smoothing approximation for wavelet low-pass filter
+gaussWeight(int i, int sigma) => math.exp(-math.pow(i, 2) / (2 * math.pow(sigma, 2)))
+
+var float[] weights = array.new<float>(smoothLen + 1)
+
+if barstate.isfirst
+    float sumWeights = 0.0
+    for i = 0 to smoothLen
+        float w = gaussWeight(i, smoothLen / 2)
+        array.set(weights, i, w)
+        sumWeights += w
+    for i = 0 to array.size(weights) - 1
+        array.set(weights, i, array.get(weights, i) / sumWeights)
+
+// Denoised trend (convolve close with Gaussian)
+closeLog = math.log(close)
+smoothed = 0.0
+if bar_index >= smoothLen
+    for i = 0 to smoothLen
+        smoothed += closeLog[i] * array.get(weights, i)
+    smoothed := math.exp(smoothed) // Back to price scale
+else
+    smoothed := close
+
+// Momentum acceleration (speed of ROC change)
+roc = bar_index >= rocLen ? ta.roc(close, rocLen) : 0.0
+speed = bar_index >= rocLen + 1 ? math.min(math.abs(ta.change(roc)), 2.0) : 0.0
+
+// Dynamic volatility (stdev over lookback, adjusted by direction and speed)
+downChanges = array.new<float>(0)
+upChanges = array.new<float>(0)
+
+if bar_index >= len
+    array.clear(downChanges)
+    array.clear(upChanges)
+    for i = 1 to len
+        changeVal = close[i-1] - close[i]
+        if changeVal > 0
+            array.push(downChanges, changeVal)
+        else if changeVal < 0
+            array.push(upChanges, -changeVal)
+
+// Limit volatility to reasonable bounds (min 1%, max 15% of current price)
+minVol = close * 0.01
+maxVol = close * 0.15
+volDown = array.size(downChanges) > 1 ? math.max(minVol, math.min(array.stdev(downChanges) * (multBase + speed * multAccel) * liqWeightDown, maxVol)) : close * 0.02
+volUp = array.size(upChanges) > 1 ? math.max(minVol, math.min(array.stdev(upChanges) * (multBase + speed * multAccel) * liqWeightUp, maxVol)) : close * 0.02
+
+// Additional smoothing for extreme volatility periods
+volDown := ta.sma(volDown, 5)
+volUp := ta.sma(volUp, 5)
+
+// Multi-level bands (asymmetric - wider upper bands, tighter lower bands)
+// Lower bands (oversold) - more conservative to prevent extreme extensions
+lowerOffset1 = 0.4
+lowerOffset2 = 0.8
+lowerOffset3 = 1.2
+lowerOffset4 = 1.6
+
+// Upper bands (overbought) - extend further to capture more upside
+upperOffset1 = 1.0
+upperOffset2 = 2.0
+upperOffset3 = 3.0
+upperOffset4 = 4.0
+
+bandLower1 = math.max(0, smoothed - volDown * lowerOffset1)
+bandLower2 = math.max(0, smoothed - volDown * lowerOffset2)
+bandLower3 = math.max(0, smoothed - volDown * lowerOffset3)
+bandLower4 = math.max(0, smoothed - volDown * lowerOffset4)
+
+bandUpper1 = smoothed + volUp * upperOffset1
+bandUpper2 = smoothed + volUp * upperOffset2
+bandUpper3 = smoothed + volUp * upperOffset3
+bandUpper4 = smoothed + volUp * upperOffset4
+
+// Local extrema on smoothed for signals
+peaks = bar_index >= 10 ? ta.pivothigh(smoothed, 5, 5) : na
+troughs = bar_index >= 10 ? ta.pivotlow(smoothed, 5, 5) : na
+
+// Strategy logic
+var float entryPrice = na
+var float stopLossPrice = na
+var float takeProfitPrice = na
+var float trailingStopPrice = na
+
+// Entry conditions
+longCondition = troughs and close <= bandLower2  // Buy when price is in strong oversold zone
+shortCondition = peaks and close >= bandUpper2   // Sell when price is in strong overbought zone
+
+// Exit conditions
+exitLong = peaks or (useStopLoss and close <= stopLossPrice) or (useTakeProfit and close >= takeProfitPrice)
+exitShort = troughs or (useStopLoss and close >= stopLossPrice) or (useTakeProfit and close <= takeProfitPrice)
+
+// Strategy execution
+if longCondition and strategy.position_size == 0
+    strategy.entry("Long", strategy.long)
+    entryPrice := close
+    stopLossPrice := useStopLoss ? close * (1 - stopLossPercent / 100) : na
+    takeProfitPrice := useTakeProfit ? close * (1 + takeProfitPercent / 100) : na
+    trailingStopPrice := useTrailingStop ? close * (1 - trailingStopPercent / 100) : na
+
+if shortCondition and strategy.position_size == 0
+    strategy.entry("Short", strategy.short)
+    entryPrice := close
+    stopLossPrice := useStopLoss ? close * (1 + stopLossPercent / 100) : na
+    takeProfitPrice := useTakeProfit ? close * (1 - takeProfitPercent / 100) : na
+    trailingStopPrice := useTrailingStop ? close * (1 + trailingStopPercent / 100) : na
+
+// Update trailing stop
+if useTrailingStop and strategy.position_size != 0
+    if strategy.position_size > 0  // Long position
+        trailingStopPrice := math.max(trailingStopPrice, close * (1 - trailingStopPercent / 100))
+        if close <= trailingStopPrice
+            strategy.close("Long", comment="Trailing Stop")
+    else  // Short position
+        trailingStopPrice := math.min(trailingStopPrice, close * (1 + trailingStopPercent / 100))
+        if close >= trailingStopPrice
+            strategy.close("Short", comment="Trailing Stop")
+
+// Exit positions
+if exitLong and strategy.position_size > 0
+    strategy.close("Long", comment="Exit Long")
+
+if exitShort and strategy.position_size < 0
+    strategy.close("Short", comment="Exit Short")
+
+// Plot strategy performance
+plot(strategy.equity, "Strategy Equity", color=color.blue, linewidth=2)
+plot(strategy.equity + (close - close[1]) * strategy.position_size, "Buy & Hold Equity", color=color.gray, linewidth=1)
+
+// Performance metrics
+var float maxEquity = 0.0
+var float maxDrawdown = 0.0
+var float currentDrawdown = 0.0
+
+if strategy.equity > maxEquity
+    maxEquity := strategy.equity
+
+currentDrawdown := (maxEquity - strategy.equity) / maxEquity * 100
+if currentDrawdown > maxDrawdown
+    maxDrawdown := currentDrawdown
+
+// Display performance info
+if barstate.islast
+    strategyROI = (strategy.equity - 10000) / 10000 * 100
+    buyHoldROI = (close - close[1]) / close[1] * 100
+    
+    table.new(position.top_right, 2, 6, bgcolor=color.white, border_width=1)
+    table.cell(table.all, 0, 0, "Metric", text_color=color.black, bgcolor=color.gray)
+    table.cell(table.all, 1, 0, "Value", text_color=color.black, bgcolor=color.gray)
+    
+    table.cell(table.all, 0, 1, "Strategy ROI", text_color=color.black)
+    table.cell(table.all, 1, 1, str.tostring(strategyROI, "#.##") + "%", text_color=color.blue)
+    
+    table.cell(table.all, 0, 2, "Buy & Hold ROI", text_color=color.black)
+    table.cell(table.all, 1, 2, str.tostring(buyHoldROI, "#.##") + "%", text_color=color.gray)
+    
+    table.cell(table.all, 0, 3, "Max Drawdown", text_color=color.black)
+    table.cell(table.all, 1, 3, str.tostring(maxDrawdown, "#.##") + "%", text_color=color.red)
+    
+    table.cell(table.all, 0, 4, "Total Trades", text_color=color.black)
+    table.cell(table.all, 1, 4, str.tostring(strategy.closedtrades), text_color=color.black)
+    
+    table.cell(table.all, 0, 5, "Win Rate", text_color=color.black)
+    table.cell(table.all, 1, 5, str.tostring(strategy.wintrades / strategy.closedtrades * 100, "#.##") + "%", text_color=color.black)
