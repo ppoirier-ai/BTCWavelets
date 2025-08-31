@@ -36,7 +36,7 @@ else
 // Momentum acceleration (speed of ROC change)
 rocLen = input.int(30, "ROC Length for Acceleration")
 roc = bar_index >= rocLen ? ta.roc(close, rocLen) : 0.0
-speed = bar_index >= rocLen + 1 ? math.abs(ta.change(roc)) : 0.0 // Proxy for growth/decline speed
+speed = bar_index >= rocLen + 1 ? math.min(math.abs(ta.change(roc)), 2.0) : 0.0 // Proxy for growth/decline speed, capped at 200%
 
 // Dynamic volatility (stdev over lookback, adjusted by direction and speed)
 downChanges = array.new<float>(0)
@@ -52,24 +52,34 @@ if bar_index >= len
         else if changeVal < 0
             array.push(upChanges, -changeVal)
 
-volDown = array.size(downChanges) > 1 ? array.stdev(downChanges) * (multBase + speed * multAccel) * liqWeightDown : close * 0.02
-volUp = array.size(upChanges) > 1 ? array.stdev(upChanges) * (multBase + speed * multAccel) * liqWeightUp : close * 0.02
+// Limit volatility to reasonable bounds (min 1%, max 20% of current price)
+minVol = close * 0.01
+maxVol = close * 0.20
+volDown = array.size(downChanges) > 1 ? math.max(minVol, math.min(array.stdev(downChanges) * (multBase + speed * multAccel) * liqWeightDown, maxVol)) : close * 0.02
+volUp = array.size(upChanges) > 1 ? math.max(minVol, math.min(array.stdev(upChanges) * (multBase + speed * multAccel) * liqWeightUp, maxVol)) : close * 0.02
 
-// Multi-level bands (symmetric for simplicity, but asymmetric vol)
+// Multi-level bands (asymmetric - wider upper bands to capture more upside)
+// Lower bands (oversold) - keep current levels
 offset1 = 0.5
 offset2 = 1.0
 offset3 = 1.5
 offset4 = 2.0
+
+// Upper bands (overbought) - extend further to capture more upside
+upperOffset1 = 1.0    // was 0.5
+upperOffset2 = 2.0    // was 1.0
+upperOffset3 = 3.0    // was 1.5
+upperOffset4 = 4.0    // was 2.0
 
 bandLower1 = smoothed - volDown * offset1
 bandLower2 = smoothed - volDown * offset2
 bandLower3 = smoothed - volDown * offset3
 bandLower4 = smoothed - volDown * offset4
 
-bandUpper1 = smoothed + volUp * offset1
-bandUpper2 = smoothed + volUp * offset2
-bandUpper3 = smoothed + volUp * offset3
-bandUpper4 = smoothed + volUp * offset4
+bandUpper1 = smoothed + volUp * upperOffset1
+bandUpper2 = smoothed + volUp * upperOffset2
+bandUpper3 = smoothed + volUp * upperOffset3
+bandUpper4 = smoothed + volUp * upperOffset4
 
 // Plot central trend as a plot object
 pTrend = plot(smoothed, "Denoised Trend", color=color.white, linewidth=2)
